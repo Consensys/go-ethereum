@@ -100,6 +100,10 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	}, nil
 }
 
+func (self *StateDB) Trie() Trie {
+	return self.trie
+}
+
 // setError remembers the first non-nil error it is called with.
 func (self *StateDB) setError(err error) {
 	if self.dbErr == nil {

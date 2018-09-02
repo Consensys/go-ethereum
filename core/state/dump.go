@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"io"
 )
 
 type DumpAccount struct {
@@ -69,6 +70,46 @@ func (self *StateDB) RawDump() Dump {
 		dump.Accounts[common.Bytes2Hex(addr)] = account
 	}
 	return dump
+}
+
+func (self *StateDB) EncodeRLP(writer io.Writer) {
+	it := trie.NewIterator(self.trie.NodeIterator(nil))
+	for it.Next() {
+		addr := self.trie.GetKey(it.Key)
+		rlp.Encode(writer, addr)
+
+		var data Account
+		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
+			panic(err)
+		}
+		rlp.Encode(writer, data)
+
+		obj := newObject(nil, common.BytesToAddress(addr), data)
+		code := obj.Code(self.db)
+		//account := DumpAccount{
+		//	Balance:  data.Balance.String(),
+		//	Nonce:    data.Nonce,
+		//	Root:     common.Bytes2Hex(data.Root[:]),
+		//	CodeHash: common.Bytes2Hex(data.CodeHash),
+		//	Code:     common.Bytes2Hex(code),
+		//	Storage:  make(map[string]string),
+		//}
+		rlp.Encode(writer, code)
+
+		storageIt := trie.NewIterator(obj.getTrie(self.db).NodeIterator(nil))
+		for storageIt.Next() {
+			key := self.trie.GetKey(storageIt.Key)
+			//value := storageIt.Value
+			_, value, _, err := rlp.Split(storageIt.Value)
+			if err != nil {
+				panic(err)
+			}
+
+			rlp.Encode(writer, key)
+			//log.Error("storage",  "account", common.ToHex(addr), "key", common.ToHex(key), "value", common.ToHex(value))
+			rlp.Encode(writer, value)
+		}
+	}
 }
 
 func (self *StateDB) Dump() []byte {

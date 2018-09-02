@@ -38,6 +38,8 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"gopkg.in/urfave/cli.v1"
+	"io"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
@@ -95,6 +97,18 @@ Optional second and third arguments control the first and
 last block to write. In this mode, the file will be appended
 if already existing. If the file ends with .gz, the output will
 be gzipped.`,
+	}
+	exportFastSyncSnapshotCommand = cli.Command {
+		Action: utils.MigrateFlags(exportFastSyncSnapshot),
+		Name: "export-fast-sync-snapshot",
+		Usage :"Export chain and state into file",
+		ArgsUsage: "<filename> [<blockNumLast>]",
+		Flags: []cli.Flag{},
+		Category: "BLOCKCHAIN COMMANDS",
+		Description: `
+Requires a first arguemtn of the file to write to.
+Optional second argument controls the last block for the snapshot to contain.
+`,
 	}
 	importPreimagesCommand = cli.Command{
 		Action:    utils.MigrateFlags(importPreimages),
@@ -327,6 +341,85 @@ func exportChain(ctx *cli.Context) error {
 		utils.Fatalf("Export error: %v\n", err)
 	}
 	fmt.Printf("Export done in %v\n", time.Since(start))
+	return nil
+}
+
+func exportFastSyncSnapshot(ctx *cli.Context) error {
+	if len(ctx.Args()) < 1 {
+		utils.Fatalf("This command requires an argument.")
+	}
+	stack := makeFullNode(ctx)
+	chain, _ := utils.MakeChain(ctx, stack)
+	//start := time.Now()
+
+	//var err error
+	fn := ctx.Args().First()
+	first := uint64(0)
+	last := chain.CurrentHeader().Number.Uint64()
+	if len(ctx.Args()) > 1 {
+		from, err := strconv.ParseInt(ctx.Args().Get(1), 10, 64)
+		if err != nil {
+			utils.Fatalf("Export error in parsing parameters: starting block number not an integer\n")
+		}
+		to, err := strconv.ParseInt(ctx.Args().Get(2), 10, 64)
+		if err != nil {
+			utils.Fatalf("Export error in parsing parameters: ending block number not an integer\n")
+		}
+		first = uint64(from)
+		last = uint64(to)
+		if last < 0 {
+			utils.Fatalf("Export error: block number must be greater than 0\n")
+		}
+	}
+
+	log.Info("Exporting fast sync format", "file", fn, "first", first, "last", last, "len", len(ctx.Args()))
+	fh, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	defer fh.Close()
+
+	var writer io.Writer = fh
+	total := last - first + 1
+	rlp.Encode(writer, total)
+
+	log.Info("Starting blockchain export")
+	start := time.Now()
+	for n := first; n <= last; n++ {
+		block := chain.GetBlockByNumber(n)
+		if block == nil {
+			return fmt.Errorf("export failed on #%d: block not found", n)
+		}
+
+		hash := block.Hash()
+		receipts := chain.GetReceiptsByHash(hash)
+		if receipts == nil {
+			return fmt.Errorf("export failed on #%d: receipt not found", n)
+		}
+
+		if err := block.EncodeRLP(writer); err != nil {
+			return err
+		}
+		if err := rlp.Encode(writer, receipts); err != nil {
+			return err
+		}
+
+		now := time.Now()
+		if elapsed := now.Sub(start); elapsed > time.Duration(30) * time.Second {
+			log.Info("Exporting blockchain", "current", n, "last", last)
+			start = now
+		}
+	}
+	log.Info("Finished blockchain export")
+
+	log.Info("Starting account state export")
+	 stateDB, err := chain.StateAt(chain.GetBlockByNumber(last).Root())
+	 if err != nil {
+	 	return err
+	 }
+	 stateDB.EncodeRLP(writer)
+	 log.Info("Finished account state export")
+
 	return nil
 }
 

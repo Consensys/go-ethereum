@@ -173,6 +173,7 @@ func init() {
 		initCommand,
 		importCommand,
 		exportCommand,
+		exportFastSyncSnapshotCommand,
 		importPreimagesCommand,
 		exportPreimagesCommand,
 		copydbCommand,
